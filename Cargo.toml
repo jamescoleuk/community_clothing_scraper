@@ -1,0 +1,17 @@
+[package]
+name = "community_clothing_scraper"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11.6", features = ["blocking", "json"]}
+scraper = "0.12.0"
+select = "0.5.0"
+anyhow = "1.0.44"
+serde =  { version = "1.0", features = ["derive"] }
+serde_json = "1.0.68"
+csv = "1.1.6"
+chrono = "0.4.19"
+structopt = "0.3.25"

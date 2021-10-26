@@ -1,11 +1,11 @@
 extern crate reqwest;
 extern crate select;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::Path;
-
 use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use anyhow::Result;
 use reqwest::blocking::ClientBuilder;
@@ -31,6 +31,15 @@ struct Product {
     product_link: String,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ScrapedProduct {
+    product_link: String,
+    title: String,
+    price: i32,
+    name: String,
+    inventory_quantity: i8,
+}
+
 #[derive(StructOpt, Debug)]
 #[structopt(
     about = "A scraper for Community Clothing. Their products are fantastic; their website's search feature is poor."
@@ -41,6 +50,18 @@ enum Opt {
         /// Fetch but use the existing links file.
         #[structopt(long, short)]
         use_existing_links: bool,
+    },
+    /// Find products in stock that fit me
+    Filter {
+        /// E.g. "34"
+        #[structopt(short, long)]
+        waist: String,
+        /// E.g. "32"
+        #[structopt(short, long)]
+        leg: String,
+        /// E.g. XS, S, XXL
+        #[structopt(short, long)]
+        size: String,
     },
 }
 fn main() -> Result<()> {
@@ -59,16 +80,40 @@ fn main() -> Result<()> {
 
             get_products(base_url, product_link_file)?;
         }
+        Opt::Filter { waist, leg, size } => {
+            let mut filtered: Vec<ScrapedProduct> = Vec::new();
+            let mut rdr = csv::Reader::from_path("./data/latest.csv")?;
+            for result in rdr.deserialize() {
+                let prod: ScrapedProduct = result?;
+                if prod.inventory_quantity > 0 {
+                    let waist_and_leg_pattern = format!("{} waist/{} leg", waist, leg);
+                    let waist_only_pattern = format!("{} waist", waist);
+
+                    // I.e. trousers
+                    if prod.title.contains(waist_and_leg_pattern.as_str())
+                        // I.e. shorts
+                        || (!prod.title.contains("leg")
+                            && prod.title.contains(waist_only_pattern.as_str()))
+                        // Everything else, e.g. jackets, t-shirts
+                        || prod.title == size
+                    {
+                        filtered.push(prod);
+                    }
+                }
+            }
+
+            for prod in filtered {
+                println!("{} - {}", prod.name, prod.price);
+            }
+        }
     }
 
     Ok(())
 }
 
 fn get_products(url: &str, product_links_file: &str) -> Result<()> {
-    let mut csv = csv::Writer::from_path(format!(
-        "data/{}_menswear.csv",
-        chrono::offset::Local::now()
-    ))?;
+    let file_name = format!("data/{}_menswear.csv", chrono::offset::Local::now());
+    let mut csv = csv::Writer::from_path(&file_name)?;
     if let Ok(lines) = read_lines(product_links_file) {
         for product_link in lines.into_iter().flatten() {
             let product = get_product(url, &product_link)?;
@@ -79,17 +124,20 @@ fn get_products(url: &str, product_links_file: &str) -> Result<()> {
                 .iter()
                 .for_each(|variant| {
                     println!("Writing out variant");
-                    csv.write_record(&[
-                        &product.product_link,
-                        &variant.name,
-                        &format!("{}", variant.price),
-                        &format!("{}", variant.inventory_quantity),
-                    ])
+                    csv.serialize(ScrapedProduct {
+                        product_link: String::from(&product.product_link),
+                        name: String::from(&variant.name),
+                        price: variant.price,
+                        inventory_quantity: variant.inventory_quantity,
+                        title: String::from(&variant.title),
+                    })
                     .unwrap();
                 })
         }
     }
     csv.flush()?;
+    // I mulled over using a symlink but a copy is platform-independent and the file is only ~80kb.
+    fs::copy(file_name, "./data/latest.csv").unwrap();
     Ok(())
 }
 
